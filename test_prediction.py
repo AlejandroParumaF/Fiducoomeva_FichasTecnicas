@@ -10,74 +10,76 @@ from typing import Optional, Tuple, Dict, Any, List # Tipos necesarios
 from tqdm import tqdm # Barra de progreso
 from time import sleep
 
-# ==============================================================================
-# FUNCIÓN 1: OBTENER PARTIDOS DE API-FOOTBALL
+# FUNCIÓN 1: OBTENER PARTIDOS DE API-FOOTBALL (PARA HOY LOCAL)
 # ==============================================================================
 
-def get_football_matches(
+def get_football_matches_today_local( # Cambiado nombre para claridad
     api_host: str,
     api_key: str,
     target_timezone: str = 'America/Bogota'
     ) -> Optional[pd.DataFrame]:
     """
-    Obtiene los partidos de fútbol 'No Iniciados' que ocurren DURANTE el día
-    de mañana según la zona horaria local especificada (target_timezone).
-    Filtra solo las ligas cuyos IDs están en la lista proporcionada o predefinida.
+    Obtiene los partidos de fútbol 'No Iniciados' (NS) que ocurren DURANTE el día
+    de HOY según la zona horaria local especificada (target_timezone).
+    Filtra solo las ligas cuyos IDs están en la lista predefinida interna.
 
     Args:
         api_host: Host de la API de Football.
         api_key: Clave API de Football.
-        target_timezone: Zona horaria local para definir "mañana" (ej: 'America/Bogota').
-        league_ids_to_include: Lista opcional de IDs de liga a incluir.
+        target_timezone: Zona horaria local para definir "hoy" (ej: 'America/Bogota').
 
     Returns:
-        Un DataFrame con partidos de mañana (hora local), o None si hay error crítico,
+        Un DataFrame con partidos de HOY (hora local), o None si hay error crítico,
         o DataFrame vacío si no hay partidos que cumplan los criterios.
     """
     # --- Validaciones y Configuración de Zona Horaria ---
     if not api_key or api_key == "YOUR_API_FOOTBALL_KEY":
-        print("ERROR (get_football_matches): API key de Football no proporcionada.")
+        print("ERROR (get_matches_today): API key de Football no proporcionada.")
         return None
     if not api_host:
-        print("ERROR (get_football_matches): Host de API Football no proporcionado.")
+        print("ERROR (get_matches_today): Host de API Football no proporcionado.")
         return None
     try:
         local_tz = pytz.timezone(target_timezone)
         utc_tz = pytz.utc
     except pytz.exceptions.UnknownTimeZoneError:
-        print(f"ERROR (get_football_matches): Zona horaria '{target_timezone}' inválida.")
+        print(f"ERROR (get_matches_today): Zona horaria '{target_timezone}' inválida.")
         return None
 
+    # --- Lista de Ligas Permitidas (Definida internamente) ---
     ligas_ids_permitidas = [39, 40, 135, 136, 78, 79, 140, 141, 61, 62, 94, 71, 72, 88, 253, 179, 128, 1032, 144, 262, 235, 203, 239, 240, 268, 270, 283, 333, 242, 281, 200, 233, 186, 292, 98, 119, 113, 162, 396, 234, 345, 265, 103, 244, 188, 169, 288, 399, 570, 299, 344, 250, 252, 304, 164, 218, 332, 373, 197, 286, 2, 3, 11, 12, 13, 15, 16, 17, 20]
-    # Convertir a set para búsquedas más eficientes (opcional pero bueno si la lista es grande)
-    ligas_ids_set = set(ligas_ids_permitidas)
+    target_league_ids = set(ligas_ids_permitidas)
+    print(f"INFO (get_matches_today): Filtrando por {len(target_league_ids)} IDs de liga predefinidos.")
 
-    # Determinar qué lista de IDs usar
-    
+
     # --- Determinar Fechas UTC para Consultar ---
-    # 1. Obtener fecha de "mañana" en la zona local
+    # 1. Obtener fecha de "hoy" en la zona local
     now_local = datetime.now(local_tz)
-    tomorrow_local_date = (now_local + timedelta(days=1)).date()
+    today_local_date = now_local.date() # Fecha local objetivo es HOY
 
     # 2. Determinar las DOS fechas UTC que necesitamos consultar en la API
-    #    Necesitamos la fecha UTC de mañana y la del día siguiente a mañana.
-    #    Usamos la fecha actual del sistema para esto, la API interpreta en UTC.
+    #    Necesitamos la fecha UTC de HOY y la de MAÑANA UTC.
     system_today = date.today()
-    utc_date_1 = (system_today + timedelta(days=1)).strftime("%Y-%m-%d")
-    utc_date_2 = (system_today + timedelta(days=2)).strftime("%Y-%m-%d")
+    utc_date_1 = system_today.strftime("%Y-%m-%d") # HOY UTC
+    utc_date_2 = (system_today + timedelta(days=1)).strftime("%Y-%m-%d") # MAÑANA UTC
     dates_to_query = [utc_date_1, utc_date_2]
 
-    print(f"INFO (get_football_matches): Mañana ({target_timezone}) es {tomorrow_local_date}.")
-    print(f"INFO (get_football_matches): Consultando API para fechas UTC: {dates_to_query}")
+    print(f"INFO (get_matches_today): Hoy ({target_timezone}) es {today_local_date}.")
+    print(f"INFO (get_matches_today): Consultando API para fechas UTC: {dates_to_query}")
 
     # --- Realizar Consultas a la API para ambas fechas ---
     all_fixtures_raw = []
     headers = {'x-rapidapi-host': api_host, 'x-rapidapi-key': api_key}
+    call_success_count = 0
 
     for query_date_str in dates_to_query:
         url = f"https://{api_host}/fixtures"
+        # Obtener TODOS los partidos de la fecha, incluyendo los ya iniciados o finalizados
+        # Si solo quieres los "No Iniciados" (NS) A PARTIR de ahora, usa "status": "NS"
+        # Si quieres TODOS los del día local, independientemente de su estado, no pongas status.
+        # Vamos a mantener "NS" por ahora, asumiendo que buscas partidos futuros del día de hoy.
         querystring = {"date": query_date_str, "status": "NS"}
-        print(f"INFO (get_football_matches): Consultando fecha UTC {query_date_str}...")
+        print(f"INFO (get_matches_today): Consultando fecha UTC {query_date_str}...")
         try:
             response = requests.get(url, headers=headers, params=querystring, timeout=60)
             response.raise_for_status()
@@ -85,38 +87,63 @@ def get_football_matches(
 
             api_errors = data.get('errors')
             if isinstance(api_errors, (dict, list)) and len(api_errors) > 0:
-                print(f"ERROR (get_football_matches): Errores API para fecha {query_date_str}: {api_errors}")
-                # Podrías decidir continuar o abortar todo si una fecha falla
-                # Por ahora, continuamos para obtener los datos de la otra fecha si es posible
-                continue # Pasar a la siguiente fecha
+                 # Verificar si es error de plan (aunque no debería ocurrir para hoy/mañana UTC)
+                 is_plan_error = False
+                 error_msg_str = str(api_errors).lower()
+                 if "'plan':" in error_msg_str and "do not have access" in error_msg_str:
+                      is_plan_error = True
+                 if is_plan_error:
+                      print(f"WARN (get_matches_today): Error de acceso API para fecha {query_date_str} (¿problema de plan inesperado?): {api_errors}")
+                 else:
+                      print(f"ERROR (get_matches_today): Errores API para fecha {query_date_str}: {api_errors}")
+                 continue # Continuar con la siguiente fecha
 
             if data.get('results', 0) > 0 and 'response' in data:
-                all_fixtures_raw.extend(data['response']) # Añadir los fixtures a la lista general
-                print(f"INFO (get_football_matches): {len(data['response'])} partidos encontrados para {query_date_str}.")
+                call_success_count += 1
+                num_found = len(data['response'])
+                all_fixtures_raw.extend(data['response'])
+                print(f"INFO (get_matches_today): {num_found} partidos encontrados para {query_date_str}.")
+            else:
+                 print(f"INFO (get_matches_today): No se encontraron partidos para {query_date_str} en la respuesta.")
 
-        # --- Manejo de errores por fecha ---
-        # Simplificado aquí, puedes añadir manejo más específico como antes si prefieres
+        except requests.exceptions.HTTPError as e:
+             # Manejar errores HTTP, incluyendo posibles errores de plan inesperados
+             response_text = ""
+             if e.response is not None: response_text = e.response.text.lower()
+             if "do not have access" in response_text:
+                  print(f"WARN (get_matches_today): Error de acceso (¿plan?) para fecha {query_date_str} (HTTPError: {e}).")
+             else:
+                  print(f"ERROR (get_matches_today): Error HTTP para fecha {query_date_str}: {e}")
+             continue
         except requests.exceptions.RequestException as e:
-            print(f"ERROR (get_football_matches): Falló la consulta para fecha {query_date_str}: {e}")
-            # Decidir si abortar todo o continuar. Aquí continuamos.
+            print(f"ERROR (get_matches_today): Falló la consulta para fecha {query_date_str}: {e}")
             continue
         except Exception as e:
-            print(f"ERROR (get_football_matches): Error inesperado procesando fecha {query_date_str}: {e}")
+            print(f"ERROR (get_matches_today): Error inesperado procesando fecha {query_date_str}: {e}")
             continue
 
-    # --- Filtrado Local por Hora y Liga ---
+    # --- Comprobar si se obtuvieron datos ---
+    if call_success_count == 0 and not all_fixtures_raw:
+        print("ERROR (get_matches_today): Ninguna llamada a API tuvo éxito o devolvió datos.")
+        expected_cols = ['Home', 'Away', 'League', 'Country', 'Time']
+        return pd.DataFrame(columns=expected_cols)
+
+
+    # --- Filtrado Local por Fecha Local y Liga ---
     matches_data_final = []
     if not all_fixtures_raw:
-        print("INFO (get_football_matches): No se obtuvieron partidos de la API después de las consultas.")
-        return pd.DataFrame(columns=['Home', 'Away', 'League', 'Country', 'Time'])
+        print("INFO (get_matches_today): No se obtuvieron partidos válidos de la API después de las consultas.")
+        expected_cols = ['Home', 'Away', 'League', 'Country', 'Time']
+        return pd.DataFrame(columns=expected_cols)
 
-    print(f"INFO (get_football_matches): Total {len(all_fixtures_raw)} partidos obtenidos de API. Filtrando por hora local y liga...")
+    print(f"INFO (get_matches_today): Total {len(all_fixtures_raw)} partidos brutos obtenidos de API. Filtrando por fecha local ({today_local_date}) y liga...")
 
-    # Definir inicio y fin del día de mañana en la zona horaria local
-    start_of_tomorrow_local = local_tz.localize(datetime.combine(tomorrow_local_date, time.min))
-    end_of_tomorrow_local = local_tz.localize(datetime.combine(tomorrow_local_date, time.max))
-
+    # Contadores para depuración
     processed_count = 0
+    filtered_out_by_date = 0
+    filtered_out_by_league = 0
+    filtered_out_by_parse_error = 0
+
     for fixture_info in all_fixtures_raw:
         try:
             league_info = fixture_info.get('league', {})
@@ -124,63 +151,72 @@ def get_football_matches(
             fixture_details = fixture_info.get('fixture', {})
             match_datetime_utc_str = fixture_details.get('date')
 
-            # 1. Filtrar por Liga PRIMERO (más eficiente)
-            if league_id is None or league_id not in ligas_ids_set:
+            # 1. Filtrar por Liga
+            if league_id is None or league_id not in target_league_ids:
+                filtered_out_by_league += 1
                 continue
 
-            # 2. Filtrar por Hora Local
+            # 2. Filtrar por Fecha Local
             if not match_datetime_utc_str:
-                print(f"WARN (get_football_matches): Fixture sin fecha UTC, omitido: {fixture_info.get('fixture', {}).get('id')}")
+                filtered_out_by_parse_error += 1
                 continue
 
             try:
-                # Convertir hora UTC del partido a objeto datetime consciente
+                # Convertir y localizar UTC
                 match_dt_utc = datetime.fromisoformat(match_datetime_utc_str.replace('Z', '+00:00'))
                 if match_dt_utc.tzinfo is None:
                     match_dt_utc = utc_tz.localize(match_dt_utc)
 
-                # Convertir a la hora local
+                # Convertir a Local
                 match_dt_local = match_dt_utc.astimezone(local_tz)
+                match_local_date_part = match_dt_local.date()
 
-                # Comprobar si cae dentro del día de mañana local
-                if start_of_tomorrow_local <= match_dt_local <= end_of_tomorrow_local:
-                    # Si pasa ambos filtros (liga y hora), procesar y añadir
+                # Comparar SOLO la fecha local con la fecha local objetivo (HOY)
+                if match_local_date_part == today_local_date:
+                    # Si la fecha coincide, procesar y añadir
                     processed_count += 1
                     country = league_info.get('country', 'N/A')
                     teams_info = fixture_info.get('teams', {})
-                    time_local_str = match_dt_local.strftime('%H:%M') # Hora local formateada
+                    time_local_str = match_dt_local.strftime('%H:%M')
 
                     matches_data_final.append({
                         'Home': teams_info.get('home', {}).get('name', 'N/A'),
                         'Away': teams_info.get('away', {}).get('name', 'N/A'),
                         'League': league_info.get('name', 'N/A'),
                         'Country': country,
-                        'Time': time_local_str, # Guardar la hora local formateada
-                        'League_ID': league_id
+                        'Time': time_local_str,
+                        # 'League_ID': league_id # Descomentar si quieres el ID
                     })
+                else:
+                     filtered_out_by_date += 1
 
             except (ValueError, TypeError) as date_err:
-                print(f"WARN (get_football_matches): Formato de fecha inválido '{match_datetime_utc_str}' al filtrar, omitido.")
+                # print(f"WARN (get_matches_today): Error parseando fecha '{match_datetime_utc_str}', omitido: {date_err}")
+                filtered_out_by_parse_error += 1
                 continue
 
         except Exception as e_fixture:
-            print(f"WARN (get_football_matches): Error procesando un fixture durante filtrado local, omitido: {e_fixture}")
+            fixture_id_log = fixture_info.get('fixture', {}).get('id', 'N/A')
+            print(f"WARN (get_matches_today): Error procesando fixture {fixture_id_log} durante filtrado, omitido: {e_fixture}")
             continue
 
     # --- Crear DataFrame Final ---
     df_matches = pd.DataFrame(matches_data_final)
-    print(f"INFO (get_football_matches): Filtrado completado. {len(df_matches)} partidos corresponden a mañana ({tomorrow_local_date}) en {target_timezone} y a las ligas seleccionadas.")
 
-    # Asegurar que las columnas existan incluso si el DF está vacío
-    expected_cols = ['Home', 'Away', 'League', 'Country', 'Time', 'League_ID']
-    for col in expected_cols:
+    print(f"\nINFO (get_matches_today): Filtrado completado.")
+    print(f"  - Partidos totales brutos de API: {len(all_fixtures_raw)}")
+    print(f"  - Omitidos por liga: {filtered_out_by_league}")
+    print(f"  - Omitidos por error fecha/parseo: {filtered_out_by_parse_error}")
+    print(f"  - Omitidos por no ser de fecha local ({today_local_date}): {filtered_out_by_date}")
+    print(f"  - Partidos finales añadidos (HOY {target_timezone}): {len(df_matches)}")
+
+    # Asegurar columnas finales
+    final_cols = ['Home', 'Away', 'League', 'Country', 'Time']
+    for col in final_cols:
         if col not in df_matches.columns:
-            df_matches[col] = pd.Series(dtype='object' if col != 'League_ID' else 'int64')
+            df_matches[col] = pd.Series(dtype='object')
 
-    # Quitar columna League_ID si no se quiere en el resultado final
-    # df_matches = df_matches.drop(columns=['League_ID'])
-
-    return df_matches
+    return df_matches[final_cols]
 # ==============================================================================
 # FUNCIÓN 2: CONSULTAR AL MODELO DE LENGUAJE (LLM)
 # ==============================================================================
@@ -434,7 +470,7 @@ if not FOOTBALL_API_KEY or not LLM_API_KEY:
 else:
     # --- Paso 1: Obtener Partidos ---
     print("\n--- PASO 1: Obteniendo Partidos ---")
-    df_partidos = get_football_matches(
+    df_partidos = get_football_matches_today_local(
         api_host=FOOTBALL_API_HOST,
         api_key=FOOTBALL_API_KEY,
         target_timezone='America/Bogota' # O la zona que necesites
