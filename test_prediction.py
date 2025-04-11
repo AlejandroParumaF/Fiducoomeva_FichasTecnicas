@@ -459,7 +459,7 @@ FOOTBALL_API_HOST = "v3.football.api-sports.io"
 FOOTBALL_API_KEY = "51c958f3c3dc64a884e05b468daba097"
 
 # Credenciales LLM (DeepSeek en este caso)
-LLM_API_KEY = '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'
+LLM_API_KEY = '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'
 LLM_BASE_URL = 'https://openrouter.ai/api/v1/chat/completions'
 LLM_MODEL = "deepseek/deepseek-chat:free"
 
